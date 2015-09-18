@@ -28,7 +28,8 @@ import string
 import subprocess
 import sys
 
-sys.path.insert(0, 'misc')
+sourcedir = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(0, os.path.join(sourcedir, 'misc'))
 import ninja_syntax
 
 
@@ -155,11 +156,15 @@ class Bootstrap:
     def _expand_paths(self, paths):
         """Expand $vars in an array of paths, e.g. from a 'build' block."""
         paths = ninja_syntax.as_list(paths)
-        return ' '.join(map(self._expand, paths))
+        return ' '.join(map(self._shell_escape, (map(self._expand, paths))))
 
     def _expand(self, str, local_vars={}):
         """Expand $vars in a string."""
         return ninja_syntax.expand(str, self.vars, local_vars)
+
+    def _shell_escape(self, path):
+        """Quote paths containing spaces."""
+        return '"%s"' % path if ' ' in path else path
 
     def _run_command(self, cmdline):
         """Run a subcommand, quietly.  Prints the full command on error."""
@@ -251,11 +256,11 @@ if platform.is_msvc():
     objext = '.obj'
 
 def src(filename):
-    return os.path.join('src', filename)
+    return os.path.join('$sourcedir', 'src', filename)
 def built(filename):
     return os.path.join('$builddir', filename)
 def doc(filename):
-    return os.path.join('doc', filename)
+    return os.path.join('$sourcedir', 'doc', filename)
 def cc(name, **kwargs):
     return n.build(built(name + objext), 'cxx', src(name + '.c'), **kwargs)
 def cxx(name, **kwargs):
@@ -267,6 +272,7 @@ def binary(name):
         return exe
     return name
 
+n.variable('sourcedir', sourcedir)
 n.variable('builddir', 'build')
 n.variable('cxx', CXX)
 if platform.is_msvc():
@@ -291,6 +297,7 @@ if platform.is_msvc():
               # We never have strings or arrays larger than 2**31.
               '/wd4267',
               '/DNOMINMAX', '/D_CRT_SECURE_NO_WARNINGS',
+              '/D_HAS_EXCEPTIONS=0',
               '/DNINJA_PYTHON="%s"' % options.with_python]
     if options.bootstrap:
         # In bootstrap mode, we have no ninja process to catch /showIncludes
@@ -318,7 +325,8 @@ else:
         cflags += ['-O2', '-DNDEBUG']
     try:
         proc = subprocess.Popen(
-            [CXX, '-fdiagnostics-color', '-c', '-x', 'c++', '/dev/null'],
+            [CXX, '-fdiagnostics-color', '-c', '-x', 'c++', '/dev/null',
+             '-o', '/dev/null'],
             stdout=open(os.devnull, 'wb'), stderr=subprocess.STDOUT)
         if proc.wait() == 0:
             cflags += ['-fdiagnostics-color']
@@ -352,6 +360,9 @@ if platform.supports_ppoll() and not options.force_pselect:
     cflags.append('-DUSE_PPOLL')
 if platform.supports_ninja_browse():
     cflags.append('-DNINJA_HAVE_BROWSE')
+
+# Search for generated headers relative to build dir.
+cflags.append('-I.')
 
 def shell_escape(str):
     """Escape str such that it's interpreted as a single argument by
@@ -415,10 +426,10 @@ objs = []
 if platform.supports_ninja_browse():
     n.comment('browse_py.h is used to inline browse.py.')
     n.rule('inline',
-           command='src/inline.sh $varname < $in > $out',
+           command='"%s"' % src('inline.sh') + ' $varname < $in > $out',
            description='INLINE $out')
     n.build(built('browse_py.h'), 'inline', src('browse.py'),
-            implicit='src/inline.sh',
+            implicit=src('inline.sh'),
             variables=[('varname', 'kBrowsePy')])
     n.newline()
 
@@ -591,11 +602,12 @@ n.newline()
 if not host.is_mingw():
     n.comment('Regenerate build files if build script changes.')
     n.rule('configure',
-           command='${configure_env}%s configure.py $configure_args' %
+           command='${configure_env}%s $sourcedir/configure.py $configure_args' %
                options.with_python,
            generator=True)
     n.build('build.ninja', 'configure',
-            implicit=['configure.py', os.path.normpath('misc/ninja_syntax.py')])
+            implicit=['$sourcedir/configure.py',
+                      os.path.normpath('$sourcedir/misc/ninja_syntax.py')])
     n.newline()
 
 n.default(ninja)

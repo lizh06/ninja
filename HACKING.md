@@ -2,10 +2,25 @@
 
 `./configure.py` generates the `build.ninja` files used to build
 ninja.  It accepts various flags to adjust build parameters.
+Run './configure.py --help' for more configuration options.
 
 The primary build target of interest is `ninja`, but when hacking on
-Ninja your changes should be testable so it's more useful to build
-and run `ninja_test` when developing.
+Ninja your changes should be testable so it's more useful to build and
+run `ninja_test` when developing.
+
+### Bootstrapping
+
+Ninja is built using itself.  To bootstrap the first binary, run the
+configure script as `./configure.py --bootstrap`.  This first compiles
+all non-test source files together, then re-builds Ninja using itself.
+You should end up with a `ninja` binary (or `ninja.exe`) in the source root.
+
+#### Windows
+
+On Windows, you'll need to install Python to run `configure.py`, and
+run everything under a Visual Studio Tools Command Prompt (or after
+running `vcvarsall` in a normal command prompt).  See below if you
+want to use mingw or some other compiler instead using Visual Studio.
 
 ### Adjusting build flags
 
@@ -176,7 +191,7 @@ root directory:
     ./ninja_test
     gcov build/*.o
 
-Look at the generated `.gcov` files directly, or use your favorit gcov viewer.
+Look at the generated `.gcov` files directly, or use your favorite gcov viewer.
 
 ### Using afl-fuzz
 

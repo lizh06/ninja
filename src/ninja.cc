@@ -260,7 +260,7 @@ bool NinjaMain::RebuildManifest(const char* input_file, string* err) {
 
 Node* NinjaMain::CollectTarget(const char* cpath, string* err) {
   string path = cpath;
-  unsigned int slash_bits;  // Unused because this path is only used for lookup.
+  unsigned int slash_bits;
   if (!CanonicalizePath(&path, &slash_bits, err))
     return NULL;
 
@@ -287,8 +287,8 @@ Node* NinjaMain::CollectTarget(const char* cpath, string* err) {
     }
     return node;
   } else {
-    *err = "unknown target '" + path + "'";
-
+    *err =
+        "unknown target '" + Node::PathDecanonicalized(path, slash_bits) + "'";
     if (path == "clean") {
       *err += ", did you mean 'ninja -t clean'?";
     } else if (path == "help") {
@@ -1156,7 +1156,7 @@ int main(int argc, char** argv) {
 #if defined(_MSC_VER)
   // Set a handler to catch crashes not caught by the __try..__except
   // block (e.g. an exception in a stack-unwind-block).
-  set_terminate(TerminateHandler);
+  std::set_terminate(TerminateHandler);
   __try {
     // Running inside __try ... __except suppresses any Windows error
     // dialogs for errors such as bad_alloc.
