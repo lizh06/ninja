@@ -53,7 +53,7 @@ obvious exceptions (fixing typos in comments don't need tests).
 
 I am very wary of changes that increase the complexity of Ninja (in
 particular, new build file syntax or command-line flags) or increase
-the maintenance burden of Ninja.  Ninja is already successfully in use
+the maintenance burden of Ninja.  Ninja is already successfully used
 by hundreds of developers for large projects and it already achieves
 (most of) the goals I set out for it to do.  It's probably best to
 discuss new feature ideas on the mailing list before I shoot down your
@@ -74,7 +74,7 @@ build "all" before committing to verify the other source still works!
 ## Testing performance impact of changes
 
 If you have a Chrome build handy, it's a good test case.  Otherwise,
-[the github downoads page](https://github.com/martine/ninja/downloads)
+[the github downoads page](https://github.com/ninja-build/ninja/releases)
 has a copy of the Chrome build files (and depfiles). You can untar
 that, then run
 

@@ -96,7 +96,8 @@ void BuildStatus::BuildEdgeStarted(Edge* edge) {
   running_edges_.insert(make_pair(edge, start_time));
   ++started_edges_;
 
-  PrintStatus(edge);
+  if (edge->use_console() || printer_.is_smart_terminal())
+    PrintStatus(edge);
 
   if (edge->use_console())
     printer_.SetConsoleLocked(true);
@@ -121,7 +122,7 @@ void BuildStatus::BuildEdgeFinished(Edge* edge,
   if (config_.verbosity == BuildConfig::QUIET)
     return;
 
-  if (!edge->use_console() && printer_.is_smart_terminal())
+  if (!edge->use_console())
     PrintStatus(edge);
 
   // Print the command that is spewing before printing its output.
@@ -362,7 +363,7 @@ void Plan::ScheduleWork(Edge* edge) {
   if (pool->ShouldDelayEdge()) {
     // The graph is not completely clean. Some Nodes have duplicate Out edges.
     // We need to explicitly ignore these here, otherwise their work will get
-    // scheduled twice (see https://github.com/martine/ninja/pull/519)
+    // scheduled twice (see https://github.com/ninja-build/ninja/pull/519)
     if (ready_.count(edge)) {
       return;
     }

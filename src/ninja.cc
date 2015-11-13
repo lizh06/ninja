@@ -22,6 +22,9 @@
 #include "getopt.h"
 #include <direct.h>
 #include <windows.h>
+#elif defined(_AIX)
+#include "getopt.h"
+#include <unistd.h>
 #else
 #include <getopt.h>
 #include <unistd.h>
@@ -254,7 +257,7 @@ bool NinjaMain::RebuildManifest(const char* input_file, string* err) {
 
   // Even if the manifest was cleaned by a restat rule, claim that it was
   // rebuilt.  Not doing so can lead to crashes, see
-  // https://github.com/martine/ninja/issues/874
+  // https://github.com/ninja-build/ninja/issues/874
   return builder.Build(err);
 }
 
