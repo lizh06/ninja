@@ -265,11 +265,11 @@ if platform.is_msvc():
     objext = '.obj'
 
 def src(filename):
-    return os.path.join('$sourcedir', 'src', filename)
+    return os.path.join('$root', 'src', filename)
 def built(filename):
     return os.path.join('$builddir', filename)
 def doc(filename):
-    return os.path.join('$sourcedir', 'doc', filename)
+    return os.path.join('$root', 'doc', filename)
 def cc(name, **kwargs):
     return n.build(built(name + objext), 'cxx', src(name + '.c'), **kwargs)
 def cxx(name, **kwargs):
@@ -281,7 +281,12 @@ def binary(name):
         return exe
     return name
 
-n.variable('sourcedir', sourcedir)
+root = sourcedir
+if root == os.getcwd():
+    # In the common case where we're building directly in the source
+    # tree, simplify all the paths to just be cwd-relative.
+    root = '.'
+n.variable('root', root)
 n.variable('builddir', 'build')
 n.variable('cxx', CXX)
 if platform.is_msvc():
@@ -321,11 +326,11 @@ if platform.is_msvc():
 else:
     cflags = ['-g', '-Wall', '-Wextra',
               '-Wno-deprecated',
+              '-Wno-missing-field-initializers',
               '-Wno-unused-parameter',
               '-fno-rtti',
               '-fno-exceptions',
               '-fvisibility=hidden', '-pipe',
-              '-Wno-missing-field-initializers',
               '-DNINJA_PYTHON="%s"' % options.with_python]
     if options.debug:
         cflags += ['-D_GLIBCXX_DEBUG', '-D_GLIBCXX_DEBUG_PEDANTIC']
@@ -592,12 +597,18 @@ n.rule('asciidoc',
 n.rule('xsltproc',
        command='xsltproc --nonet doc/docbook.xsl $in > $out',
        description='XSLTPROC $out')
-xml = n.build(built('manual.xml'), 'asciidoc', doc('manual.asciidoc'))
-manual = n.build(doc('manual.html'), 'xsltproc', xml,
-                 implicit=doc('style.css'))
+docbookxml = n.build(built('manual.xml'), 'asciidoc', doc('manual.asciidoc'))
+manual = n.build(doc('manual.html'), 'xsltproc', docbookxml,
+                 implicit=[doc('style.css'), doc('docbook.xsl')])
 n.build('manual', 'phony',
         order_only=manual)
 n.newline()
+
+n.rule('dblatex',
+       command='dblatex -q -o $out -p doc/dblatex.xsl $in',
+       description='DBLATEX $out')
+n.build(doc('manual.pdf'), 'dblatex', docbookxml,
+        implicit=[doc('dblatex.xsl')])
 
 n.comment('Generate Doxygen.')
 n.rule('doxygen',
@@ -618,12 +629,12 @@ n.newline()
 if not host.is_mingw():
     n.comment('Regenerate build files if build script changes.')
     n.rule('configure',
-           command='${configure_env}%s $sourcedir/configure.py $configure_args' %
+           command='${configure_env}%s $root/configure.py $configure_args' %
                options.with_python,
            generator=True)
     n.build('build.ninja', 'configure',
-            implicit=['$sourcedir/configure.py',
-                      os.path.normpath('$sourcedir/misc/ninja_syntax.py')])
+            implicit=['$root/configure.py',
+                      os.path.normpath('$root/misc/ninja_syntax.py')])
     n.newline()
 
 n.default(ninja)
