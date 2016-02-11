@@ -83,7 +83,7 @@ class Platform(object):
                                  stdout=subprocess.PIPE,
                                  stderr=subprocess.PIPE)
         out, err = popen.communicate()
-        return b'/FS ' in out
+        return b'/FS' in out
 
     def is_windows(self):
         return self.is_mingw() or self.is_msvc()
@@ -133,7 +133,9 @@ class Bootstrap:
         return self.writer.newline()
 
     def variable(self, key, val):
-        self.vars[key] = self._expand(val)
+        # In bootstrap mode, we have no ninja process to catch /showIncludes
+        # output.
+        self.vars[key] = self._expand(val).replace('/showIncludes', '')
         return self.writer.variable(key, val)
 
     def rule(self, name, **kwargs):
@@ -302,6 +304,8 @@ if platform.is_msvc():
               '/WX',  # Warnings as errors.
               '/wd4530', '/wd4100', '/wd4706',
               '/wd4512', '/wd4800', '/wd4702', '/wd4819',
+              # Disable warnings about constant conditional expressions.
+              '/wd4127',
               # Disable warnings about passing "this" during initialization.
               '/wd4355',
               # Disable warnings about ignored typedef in DbgHelp.h
@@ -313,10 +317,6 @@ if platform.is_msvc():
               '/DNOMINMAX', '/D_CRT_SECURE_NO_WARNINGS',
               '/D_HAS_EXCEPTIONS=0',
               '/DNINJA_PYTHON="%s"' % options.with_python]
-    if options.bootstrap:
-        # In bootstrap mode, we have no ninja process to catch /showIncludes
-        # output.
-        cflags.remove('/showIncludes')
     if platform.msvc_needs_fs():
         cflags.append('/FS')
     ldflags = ['/DEBUG', '/libpath:$builddir']

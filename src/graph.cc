@@ -241,8 +241,9 @@ string EdgeEnv::LookupVariable(const string& var) {
                         edge_->inputs_.begin() + explicit_deps_count,
                         var == "in" ? ' ' : '\n');
   } else if (var == "out") {
+    int explicit_outs_count = edge_->outputs_.size() - edge_->implicit_outs_;
     return MakePathList(edge_->outputs_.begin(),
-                        edge_->outputs_.end(),
+                        edge_->outputs_.begin() + explicit_outs_count,
                         ' ');
   }
 
@@ -395,8 +396,15 @@ bool ImplicitDepLoader::LoadDeps(Edge* edge, string* err) {
 bool ImplicitDepLoader::LoadDepFile(Edge* edge, const string& path,
                                     string* err) {
   METRIC_RECORD("depfile load");
-  string content = disk_interface_->ReadFile(path, err);
-  if (!err->empty()) {
+  // Read depfile content.  Treat a missing depfile as empty.
+  string content;
+  switch (disk_interface_->ReadFile(path, &content, err)) {
+  case DiskInterface::Okay:
+    break;
+  case DiskInterface::NotFound:
+    err->clear();
+    break;
+  case DiskInterface::OtherError:
     *err = "loading '" + path + "': " + *err;
     return false;
   }

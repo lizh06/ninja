@@ -126,8 +126,15 @@ void BuildStatus::BuildEdgeFinished(Edge* edge,
     PrintStatus(edge);
 
   // Print the command that is spewing before printing its output.
-  if (!success)
-    printer_.PrintOnNewLine("FAILED: " + edge->EvaluateCommand() + "\n");
+  if (!success) {
+    string outputs;
+    for (vector<Node*>::const_iterator o = edge->outputs_.begin();
+         o != edge->outputs_.end(); ++o)
+      outputs += (*o)->path() + " ";
+
+    printer_.PrintOnNewLine("FAILED: " + outputs + "\n");
+    printer_.PrintOnNewLine(edge->EvaluateCommand() + "\n");
+  }
 
   if (!output.empty()) {
     // ninja sets stdout and stderr of subprocesses to a pipe, to be able to
@@ -871,9 +878,17 @@ bool Builder::ExtractDeps(CommandRunner::Result* result,
       return false;
     }
 
-    string content = disk_interface_->ReadFile(depfile, err);
-    if (!err->empty())
+    // Read depfile content.  Treat a missing depfile as empty.
+    string content;
+    switch (disk_interface_->ReadFile(depfile, &content, err)) {
+    case DiskInterface::Okay:
+      break;
+    case DiskInterface::NotFound:
+      err->clear();
+      break;
+    case DiskInterface::OtherError:
       return false;
+    }
     if (content.empty())
       return true;
 
@@ -892,9 +907,11 @@ bool Builder::ExtractDeps(CommandRunner::Result* result,
       deps_nodes->push_back(state_->GetNode(*i, slash_bits));
     }
 
-    if (disk_interface_->RemoveFile(depfile) < 0) {
-      *err = string("deleting depfile: ") + strerror(errno) + string("\n");
-      return false;
+    if (!g_keep_depfile) {
+      if (disk_interface_->RemoveFile(depfile) < 0) {
+        *err = string("deleting depfile: ") + strerror(errno) + string("\n");
+        return false;
+      }
     }
   } else {
     Fatal("unknown deps type '%s'", deps_type.c_str());

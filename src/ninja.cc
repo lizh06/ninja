@@ -229,14 +229,6 @@ int GuessParallelism() {
   }
 }
 
-/// An implementation of ManifestParser::FileReader that actually reads
-/// the file.
-struct RealFileReader : public ManifestParser::FileReader {
-  virtual bool ReadFile(const string& path, string* content, string* err) {
-    return ::ReadFile(path, content, err) == 0;
-  }
-};
-
 /// Rebuild the build manifest, if necessary.
 /// Returns true if the manifest was rebuilt.
 bool NinjaMain::RebuildManifest(const char* input_file, string* err) {
@@ -701,7 +693,7 @@ int NinjaMain::ToolUrtle(int argc, char** argv) {
     if ('0' <= *p && *p <= '9') {
       count = count*10 + *p - '0';
     } else {
-      for (int i = 0; i < std::max(count, 1); ++i)
+      for (int i = 0; i < max(count, 1); ++i)
         printf("%c", *p);
       count = 0;
     }
@@ -774,9 +766,10 @@ const Tool* ChooseTool(const string& tool_name) {
 bool DebugEnable(const string& name) {
   if (name == "list") {
     printf("debugging modes:\n"
-"  stats    print operation counts/timing info\n"
-"  explain  explain what caused a command to execute\n"
-"  keeprsp  don't delete @response files on success\n"
+"  stats        print operation counts/timing info\n"
+"  explain      explain what caused a command to execute\n"
+"  keepdepfile  don't delete depfiles after they're read by ninja\n"
+"  keeprsp      don't delete @response files on success\n"
 #ifdef _WIN32
 "  nostatcache  don't batch stat() calls per directory and cache them\n"
 #endif
@@ -788,6 +781,9 @@ bool DebugEnable(const string& name) {
   } else if (name == "explain") {
     g_explaining = true;
     return true;
+  } else if (name == "keepdepfile") {
+    g_keep_depfile = true;
+    return true;
   } else if (name == "keeprsp") {
     g_keep_rsp = true;
     return true;
@@ -796,8 +792,9 @@ bool DebugEnable(const string& name) {
     return true;
   } else {
     const char* suggestion =
-        SpellcheckString(name.c_str(), "stats", "explain", "keeprsp",
-        "nostatcache", NULL);
+        SpellcheckString(name.c_str(),
+                         "stats", "explain", "keepdepfile", "keeprsp",
+                         "nostatcache", NULL);
     if (suggestion) {
       Error("unknown debug setting '%s', did you mean '%s'?",
             name.c_str(), suggestion);
@@ -1112,9 +1109,10 @@ int real_main(int argc, char** argv) {
   for (int cycle = 1; cycle <= kCycleLimit; ++cycle) {
     NinjaMain ninja(ninja_command, config);
 
-    RealFileReader file_reader;
-    ManifestParser parser(&ninja.state_, &file_reader,
-                          options.dupe_edges_should_err);
+    ManifestParser parser(&ninja.state_, &ninja.disk_interface_,
+                          options.dupe_edges_should_err
+                              ? kDupeEdgeActionError
+                              : kDupeEdgeActionWarn);
     string err;
     if (!parser.Load(options.input_file, &err)) {
       Error("%s", err.c_str());
@@ -1135,6 +1133,10 @@ int real_main(int argc, char** argv) {
 
     // Attempt to rebuild the manifest before building anything else
     if (ninja.RebuildManifest(options.input_file, &err)) {
+      // In dry_run mode the regeneration will succeed without changing the
+      // manifest forever. Better to return immediately.
+      if (config.dry_run)
+        return 0;
       // Start the build over with the new manifest.
       continue;
     } else if (!err.empty()) {
@@ -1159,7 +1161,7 @@ int main(int argc, char** argv) {
 #if defined(_MSC_VER)
   // Set a handler to catch crashes not caught by the __try..__except
   // block (e.g. an exception in a stack-unwind-block).
-  std::set_terminate(TerminateHandler);
+  set_terminate(TerminateHandler);
   __try {
     // Running inside __try ... __except suppresses any Windows error
     // dialogs for errors such as bad_alloc.
