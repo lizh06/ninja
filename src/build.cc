@@ -84,7 +84,7 @@ BuildStatus::BuildStatus(const BuildConfig& config)
 
   progress_status_format_ = getenv("NINJA_STATUS");
   if (!progress_status_format_)
-    progress_status_format_ = "[%s/%t] ";
+    progress_status_format_ = "[%f/%t] ";
 }
 
 void BuildStatus::PlanHasTotalEdges(int total) {
@@ -97,7 +97,7 @@ void BuildStatus::BuildEdgeStarted(Edge* edge) {
   ++started_edges_;
 
   if (edge->use_console() || printer_.is_smart_terminal())
-    PrintStatus(edge);
+    PrintStatus(edge, kEdgeStarted);
 
   if (edge->use_console())
     printer_.SetConsoleLocked(true);
@@ -109,6 +109,7 @@ void BuildStatus::BuildEdgeFinished(Edge* edge,
                                     int* start_time,
                                     int* end_time) {
   int64_t now = GetTimeMillis();
+
   ++finished_edges_;
 
   RunningEdgeMap::iterator i = running_edges_.find(edge);
@@ -123,7 +124,7 @@ void BuildStatus::BuildEdgeFinished(Edge* edge,
     return;
 
   if (!edge->use_console())
-    PrintStatus(edge);
+    PrintStatus(edge, kEdgeFinished);
 
   // Print the command that is spewing before printing its output.
   if (!success) {
@@ -158,13 +159,18 @@ void BuildStatus::BuildEdgeFinished(Edge* edge,
   }
 }
 
+void BuildStatus::BuildStarted() {
+  overall_rate_.Restart();
+  current_rate_.Restart();
+}
+
 void BuildStatus::BuildFinished() {
   printer_.SetConsoleLocked(false);
   printer_.PrintOnNewLine("");
 }
 
 string BuildStatus::FormatProgressStatus(
-    const char* progress_status_format) const {
+    const char* progress_status_format, EdgeStatus status) const {
   string out;
   char buf[32];
   int percent;
@@ -189,10 +195,15 @@ string BuildStatus::FormatProgressStatus(
         break;
 
         // Running edges.
-      case 'r':
-        snprintf(buf, sizeof(buf), "%d", started_edges_ - finished_edges_);
+      case 'r': {
+        int running_edges = started_edges_ - finished_edges_;
+        // count the edge that just finished as a running edge
+        if (status == kEdgeFinished)
+          running_edges++;
+        snprintf(buf, sizeof(buf), "%d", running_edges);
         out += buf;
         break;
+      }
 
         // Unstarted edges.
       case 'u':
@@ -222,7 +233,7 @@ string BuildStatus::FormatProgressStatus(
 
         // Percentage
       case 'p':
-        percent = (100 * started_edges_) / total_edges_;
+        percent = (100 * finished_edges_) / total_edges_;
         snprintf(buf, sizeof(buf), "%3i%%", percent);
         out += buf;
         break;
@@ -246,7 +257,7 @@ string BuildStatus::FormatProgressStatus(
   return out;
 }
 
-void BuildStatus::PrintStatus(Edge* edge) {
+void BuildStatus::PrintStatus(Edge* edge, EdgeStatus status) {
   if (config_.verbosity == BuildConfig::QUIET)
     return;
 
@@ -256,11 +267,7 @@ void BuildStatus::PrintStatus(Edge* edge) {
   if (to_print.empty() || force_full_command)
     to_print = edge->GetBinding("command");
 
-  if (finished_edges_ == 0) {
-    overall_rate_.Restart();
-    current_rate_.Restart();
-  }
-  to_print = FormatProgressStatus(progress_status_format_) + to_print;
+  to_print = FormatProgressStatus(progress_status_format_, status) + to_print;
 
   printer_.Print(to_print,
                  force_full_command ? LinePrinter::FULL : LinePrinter::ELIDE);
@@ -366,35 +373,43 @@ Edge* Plan::FindWork() {
 }
 
 void Plan::ScheduleWork(Edge* edge) {
+  set<Edge*>::iterator e = ready_.lower_bound(edge);
+  if (e != ready_.end() && !ready_.key_comp()(edge, *e)) {
+    // This edge has already been scheduled.  We can get here again if an edge
+    // and one of its dependencies share an order-only input, or if a node
+    // duplicates an out edge (see https://github.com/ninja-build/ninja/pull/519).
+    // Avoid scheduling the work again.
+    return;
+  }
+
   Pool* pool = edge->pool();
   if (pool->ShouldDelayEdge()) {
-    // The graph is not completely clean. Some Nodes have duplicate Out edges.
-    // We need to explicitly ignore these here, otherwise their work will get
-    // scheduled twice (see https://github.com/ninja-build/ninja/pull/519)
-    if (ready_.count(edge)) {
-      return;
-    }
     pool->DelayEdge(edge);
     pool->RetrieveReadyEdges(&ready_);
   } else {
     pool->EdgeScheduled(*edge);
-    ready_.insert(edge);
+    ready_.insert(e, edge);
   }
 }
 
-void Plan::EdgeFinished(Edge* edge) {
+void Plan::EdgeFinished(Edge* edge, EdgeResult result) {
   map<Edge*, bool>::iterator e = want_.find(edge);
   assert(e != want_.end());
   bool directly_wanted = e->second;
-  if (directly_wanted)
-    --wanted_edges_;
-  want_.erase(e);
-  edge->outputs_ready_ = true;
 
   // See if this job frees up any delayed jobs.
   if (directly_wanted)
     edge->pool()->EdgeFinished(*edge);
   edge->pool()->RetrieveReadyEdges(&ready_);
+
+  // The rest of this function only applies to successful commands.
+  if (result != kEdgeSucceeded)
+    return;
+
+  if (directly_wanted)
+    --wanted_edges_;
+  want_.erase(e);
+  edge->outputs_ready_ = true;
 
   // Check off any nodes we were waiting for with this edge.
   for (vector<Node*>::iterator o = edge->outputs_.begin();
@@ -418,7 +433,7 @@ void Plan::NodeFinished(Node* node) {
       } else {
         // We do not need to build this edge, but we might need to build one of
         // its dependents.
-        EdgeFinished(*oe);
+        EdgeFinished(*oe, kEdgeSucceeded);
       }
     }
   }
@@ -635,6 +650,9 @@ bool Builder::Build(string* err) {
       command_runner_.reset(new RealCommandRunner(config_));
   }
 
+  // We are about to start the build process.
+  status_->BuildStarted();
+
   // This main loop runs the entire build process.
   // It is structured like this:
   // First, we attempt to start as many commands as allowed by the
@@ -651,7 +669,7 @@ bool Builder::Build(string* err) {
         }
 
         if (edge->is_phony()) {
-          plan_.EdgeFinished(edge);
+          plan_.EdgeFinished(edge, Plan::kEdgeSucceeded);
         } else {
           ++pending_commands;
         }
@@ -770,8 +788,10 @@ bool Builder::FinishCommand(CommandRunner::Result* result, string* err) {
                              &start_time, &end_time);
 
   // The rest of this function only applies to successful commands.
-  if (!result->success())
+  if (!result->success()) {
+    plan_.EdgeFinished(edge, Plan::kEdgeFailed);
     return true;
+  }
 
   // Restat the edge outputs, if necessary.
   TimeStamp restat_mtime = 0;
@@ -820,7 +840,7 @@ bool Builder::FinishCommand(CommandRunner::Result* result, string* err) {
     }
   }
 
-  plan_.EdgeFinished(edge);
+  plan_.EdgeFinished(edge, Plan::kEdgeSucceeded);
 
   // Delete any left over response file.
   string rspfile = edge->GetUnescapedRspfile();
