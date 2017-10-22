@@ -70,6 +70,9 @@ struct Options {
 
   /// Whether duplicate rules for one target should warn or print an error.
   bool dupe_edges_should_err;
+
+  /// Whether phony cycles should warn or print an error.
+  bool phony_cycle_should_err;
 };
 
 /// The Ninja main() loads up a series of data structures; various tools need
@@ -209,10 +212,10 @@ void Usage(const BuildConfig& config) {
 "  -n       dry run (don't run commands but act like they succeeded)\n"
 "  -v       show all command lines while building\n"
 "\n"
-"  -d MODE  enable debugging (use -d list to list modes)\n"
-"  -t TOOL  run a subtool (use -t list to list subtools)\n"
+"  -d MODE  enable debugging (use '-d list' to list modes)\n"
+"  -t TOOL  run a subtool (use '-t list' to list subtools)\n"
 "    terminates toplevel options; further flags are passed to the tool\n"
-"  -w FLAG  adjust warnings (use -w list to list warnings)\n",
+"  -w FLAG  adjust warnings (use '-w list' to list warnings)\n",
           kNinjaVersion, config.parallelism);
 }
 
@@ -491,7 +494,7 @@ int NinjaMain::ToolDeps(const Options* options, int argc, char** argv) {
     TimeStamp mtime = disk_interface.Stat((*it)->path(), &err);
     if (mtime == -1)
       Error("%s", err.c_str());  // Log and ignore Stat() errors;
-    printf("%s: #deps %d, deps mtime %d (%s)\n",
+    printf("%s: #deps %d, deps mtime %" PRId64 " (%s)\n",
            (*it)->path().c_str(), deps->node_count, deps->mtime,
            (!mtime || mtime > deps->mtime ? "STALE":"VALID"));
     for (int i = 0; i < deps->node_count; ++i)
@@ -845,7 +848,8 @@ bool DebugEnable(const string& name) {
 bool WarningEnable(const string& name, Options* options) {
   if (name == "list") {
     printf("warning flags:\n"
-"  dupbuild={err,warn}  multiple build lines for one target\n");
+"  dupbuild={err,warn}  multiple build lines for one target\n"
+"  phonycycle={err,warn}  phony build statement references itself\n");
     return false;
   } else if (name == "dupbuild=err") {
     options->dupe_edges_should_err = true;
@@ -853,9 +857,16 @@ bool WarningEnable(const string& name, Options* options) {
   } else if (name == "dupbuild=warn") {
     options->dupe_edges_should_err = false;
     return true;
+  } else if (name == "phonycycle=err") {
+    options->phony_cycle_should_err = true;
+    return true;
+  } else if (name == "phonycycle=warn") {
+    options->phony_cycle_should_err = false;
+    return true;
   } else {
     const char* suggestion =
-        SpellcheckString(name.c_str(), "dupbuild=err", "dupbuild=warn", NULL);
+        SpellcheckString(name.c_str(), "dupbuild=err", "dupbuild=warn",
+                         "phonycycle=err", "phonycycle=warn", NULL);
     if (suggestion) {
       Error("unknown warning flag '%s', did you mean '%s'?",
             name.c_str(), suggestion);
@@ -1144,10 +1155,14 @@ int real_main(int argc, char** argv) {
   for (int cycle = 1; cycle <= kCycleLimit; ++cycle) {
     NinjaMain ninja(ninja_command, config);
 
-    ManifestParser parser(&ninja.state_, &ninja.disk_interface_,
-                          options.dupe_edges_should_err
-                              ? kDupeEdgeActionError
-                              : kDupeEdgeActionWarn);
+    ManifestParserOptions parser_opts;
+    if (options.dupe_edges_should_err) {
+      parser_opts.dupe_edge_action_ = kDupeEdgeActionError;
+    }
+    if (options.phony_cycle_should_err) {
+      parser_opts.phony_cycle_action_ = kPhonyCycleActionError;
+    }
+    ManifestParser parser(&ninja.state_, &ninja.disk_interface_, parser_opts);
     string err;
     if (!parser.Load(options.input_file, &err)) {
       Error("%s", err.c_str());
